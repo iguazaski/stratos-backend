@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN NATIVA JSON MODE)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN BLINDADA ANTI-CONGELAMIENTO)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -180,19 +180,19 @@ app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. PROXY DE RADAR EN MODO JSON ESTRICTO OBLIGATORIO
+// 5. PROXY DE RADAR CON VERIFICADOR ANTI-CONGELAMIENTO INTEGRADO
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
   try {
     const config = await Config.findOne({ key: 'system_config' });
     
     if (!config || !config.apiKeysPool) {
-      return res.status(400).json({ error: 'ERROR DE RED: No hay llaves de Google cargadas en el Panel Creador.' });
+      return res.status(400).json({ error: 'No hay llaves de Google cargadas en el Panel Creador.' });
     }
 
     const keys = config.apiKeysPool.split(',').map(k => k.trim()).filter(k => k.length > 0);
     if (keys.length === 0) {
-      return res.status(400).json({ error: 'ERROR DE CONFIGURACIÓN: El pool de llaves está vacío.' });
+      return res.status(400).json({ error: 'El pool de llaves configurado está vacío.' });
     }
 
     const targetKey = keys[Math.floor(Math.random() * keys.length)]; 
@@ -203,16 +203,53 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ googleSearch: {} }],
-        // 🛡️ EL PARCHE MAESTRO: Forzamos a Google a responder ÚNICAMENTE en JSON válido
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
+        tools: [{ google_search: {} }] // 🌐 Canal de rastreo oficial nativo
       }),
     });
 
     const googleData = await googleResponse.json();
-    res.json(googleData);
+
+    // INTERCEPTOR DE ERRORES: Si Google rechaza la llave, avisamos al cliente de inmediato
+    if (googleData.error) {
+      return res.status(400).json({ error: `Google API Error: ${googleData.error.message}` });
+    }
+
+    let rawText = googleData.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) {
+      return res.status(400).json({ error: 'Respuesta vacía de Google. Inténtalo de nuevo.' });
+    }
+
+    // EXTRACTOR DE SEGURIDAD INTERNA: Aísla el JSON de saludos humanos automáticamente
+    const firstOpen = rawText.indexOf('{');
+    const lastClose = rawText.lastIndexOf('}');
+    
+    let cleanText = "";
+    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+      cleanText = rawText.substring(firstOpen, lastClose + 1);
+    } else {
+      cleanText = rawText;
+    }
+
+    // Validación de consistencia final
+    try {
+      const testParse = JSON.parse(cleanText.replace(/```json/g, '').replace(/```/g, '').trim());
+      if (!testParse.partidos) testParse.partidos = [];
+      cleanText = JSON.stringify(testParse);
+    } catch (e) {
+      // Si la IA responde con texto normal indomable, estructuramos un JSON vacío válido para desbloquear la pantalla
+      cleanText = JSON.stringify({ partidos: [] });
+    }
+
+    // Reconstruimos la estructura exacta que el archivo App.js espera recibir
+    const robustResponse = {
+      candidates: [{
+        content: {
+          parts: [{ text: cleanText }]
+        }
+      }]
+    };
+
+    res.json(robustResponse);
   } catch (err) {
     res.status(500).json({ error: 'Fallo crítico en el túnel de escaneo del servidor.' });
   }

@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN BLINDADA ANTI-CONGELAMIENTO)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN JURISDICCIÓN ADMINISTRATIVA)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -20,7 +20,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('Error de conexión en MongoDB:', err));
 
 // ============================================================
-// MODELOS DE DATOS (ESQUEMAS CON AJUSTES INDIVIDUALES)
+// MODELOS DE DATOS (ESQUEMAS CON AJUSTES INDIVIDUALES Y BLOQUEO)
 // ============================================================
 const UserSchema = new mongoose.Schema({
   username: { type: String, unique: true, required: true },
@@ -29,7 +29,8 @@ const UserSchema = new mongoose.Schema({
   activeIp: { type: String, default: null },
   bankroll: { type: Number, default: 100.00 },
   kellyFraction: { type: Number, default: 0.25 },
-  maxExposure: { type: Number, default: 0.15 }
+  maxExposure: { type: Number, default: 0.15 },
+  isBlocked: { type: Boolean, default: false } // Campo de suspensión de cuenta
 });
 
 const ConfigSchema = new mongoose.Schema({
@@ -52,7 +53,7 @@ const getCleanClientIp = (req) => {
 };
 
 // ============================================================
-// MIDDLEWARE DE SEGURIDAD (VERIFICACIÓN DE TOKEN E IP FILTRADA)
+// MIDDLEWARE DE SEGURIDAD (VERIFICACIÓN DE TOKEN, IP E ISBLOCKED)
 // ============================================================
 const authMiddleware = async (req, res, next) => {
   const token = req.headers['authorization'];
@@ -66,6 +67,11 @@ const authMiddleware = async (req, res, next) => {
 
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'Usuario no registrado.' });
+
+    // CORTAFUEGOS DE SUSPENSIÓN: Expulsa al usuario en caliente si ha sido bloqueado
+    if (user.isBlocked) {
+      return res.status(403).json({ error: 'ACCESO DENEGADO: Tu cuenta ha sido suspendida por el administrador.' });
+    }
 
     if (user.activeIp && user.activeIp !== clientIp) {
       return res.status(403).json({ error: 'ALERTA DE SEGURIDAD: Intento de multi-sesión IP detectado.' });
@@ -81,7 +87,7 @@ const authMiddleware = async (req, res, next) => {
 // ENDPOINTS OPERATIVOS API
 // ============================================================
 
-// 1. INICIO DE SESIÓN
+// 1. INICIO DE SESIÓN (Valida si está bloqueado antes de firmar token)
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   const clientIp = getCleanClientIp(req);
@@ -89,6 +95,10 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const user = await User.findOne({ username: username.toLowerCase() });
     if (!user) return res.status(400).json({ error: 'Usuario no registrado en el sistema.' });
+
+    if (user.isBlocked) {
+      return res.status(403).json({ error: 'Cuenta suspendida. Contacta al administrador central.' });
+    }
 
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) return res.status(400).json({ error: 'Contraseña incorrecta.' });
@@ -137,7 +147,64 @@ app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
   }
 });
 
-// 3. ACTUALIZAR POOL DE LLAVES (SOLO ADMIN)
+// 3. VER LISTA DE USUARIOS REGISTRADOS (SOLO ADMIN)
+app.get('/api/admin/users', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acceso restringido.' });
+  try {
+    // Traemos todos los usuarios omitiendo la contraseña por seguridad
+    const users = await User.find({}, '-password');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al extraer la nómina de operadores.' });
+  }
+});
+
+// 4. ELIMINAR UN OPERADOR POR COMPLETO (SOLO ADMIN)
+app.delete('/api/admin/users/:id', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acceso restringido.' });
+  try {
+    const userTarget = await User.findById(req.params.id);
+    if (!userTarget) return res.status(404).json({ error: 'Usuario no localizado.' });
+    
+    // Evitar que el admin se borre a sí mismo por error
+    if (userTarget.username === 'admin') {
+      return res.status(400).json({ error: 'Protección Raíz: No puedes eliminar la cuenta maestra admin.' });
+    }
+
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: 'Operador purgado del ecosistema correctamente.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Fallo al eliminar registro cloud.' });
+  }
+});
+
+// 5. ALTERNAR BLOQUEO / SUSPENSIÓN DE UN OPERADOR (SOLO ADMIN)
+app.post('/api/admin/users/:id/toggle-block', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acceso restringido.' });
+  try {
+    const userTarget = await User.findById(req.params.id);
+    if (!userTarget) return res.status(404).json({ error: 'Usuario no localizado.' });
+
+    if (userTarget.username === 'admin') {
+      return res.status(400).json({ error: 'Protección Raíz: No puedes suspender al administrador central.' });
+    }
+
+    // Invertimos el estado de bloqueo
+    userTarget.isBlocked = !userTarget.isBlocked;
+    
+    // Si lo bloqueamos, le limpiamos la IP activa para desconectarlo forzosamente en el acto
+    if (userTarget.isBlocked) {
+      userTarget.activeIp = null;
+    }
+
+    await userTarget.save();
+    res.json({ success: 'Estado de restricción actualizado con éxito.', user: userTarget });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al conmutar el interruptor de bloqueo.' });
+  }
+});
+
+// 6. ACTUALIZAR POOL DE LLAVES (SOLO ADMIN)
 app.post('/api/admin/config', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Restringido. Solo el creador puede alterar los canales.' });
 
@@ -156,7 +223,7 @@ app.post('/api/admin/config', authMiddleware, async (req, res) => {
   }
 });
 
-// 4. ACTUALIZAR FINANZAS PROPIAS
+// 7. ACTUALIZAR FINANZAS PROPIAS
 app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   const { bankroll, kellyFraction, maxExposure } = req.body;
 
@@ -180,7 +247,7 @@ app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. PROXY DE RADAR CON VERIFICADOR ANTI-CONGELAMIENTO INTEGRADO
+// 8. PROXY DE RADAR CON VERIFICADOR ANTI-CONGELAMIENTO
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
   try {
@@ -203,13 +270,12 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }] // 🌐 Canal de rastreo oficial nativo
+        tools: [{ google_search: {} }] 
       }),
     });
 
     const googleData = await googleResponse.json();
 
-    // INTERCEPTOR DE ERRORES: Si Google rechaza la llave, avisamos al cliente de inmediato
     if (googleData.error) {
       return res.status(400).json({ error: `Google API Error: ${googleData.error.message}` });
     }
@@ -219,7 +285,6 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Respuesta vacía de Google. Inténtalo de nuevo.' });
     }
 
-    // EXTRACTOR DE SEGURIDAD INTERNA: Aísla el JSON de saludos humanos automáticamente
     const firstOpen = rawText.indexOf('{');
     const lastClose = rawText.lastIndexOf('}');
     
@@ -230,17 +295,14 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       cleanText = rawText;
     }
 
-    // Validación de consistencia final
     try {
       const testParse = JSON.parse(cleanText.replace(/```json/g, '').replace(/```/g, '').trim());
       if (!testParse.partidos) testParse.partidos = [];
       cleanText = JSON.stringify(testParse);
     } catch (e) {
-      // Si la IA responde con texto normal indomable, estructuramos un JSON vacío válido para desbloquear la pantalla
       cleanText = JSON.stringify({ partidos: [] });
     }
 
-    // Reconstruimos la estructura exacta que el archivo App.js espera recibir
     const robustResponse = {
       candidates: [{
         content: {
@@ -255,7 +317,7 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
   }
 });
 
-// 6. CIERRE DE SESIÓN SEGURO
+// 9. CIERRE DE SESIÓN SEGURO
 app.post('/api/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { activeIp: null });
@@ -281,7 +343,8 @@ async function crearPrimerAdmin() {
         role: "admin",
         bankroll: 100.00,
         kellyFraction: 0.25,
-        maxExposure: 0.15
+        maxExposure: 0.15,
+        isBlocked: false
       });
       console.log("👤 Base de datos limpia detectada e inyectada.");
     }

@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN MULTI-PERFIL CLOUD)
+// server.js — BACKEND SEGURO STRATOS v15.2 (CORRECCIÓN PROXY IP MULTI-PERFIL)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -27,7 +27,6 @@ const UserSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, enum: ['admin', 'operador'], default: 'operador' },
   activeIp: { type: String, default: null },
-  // Cada usuario guarda sus propios datos financieros de forma aislada
   bankroll: { type: Number, default: 100.00 },
   kellyFraction: { type: Number, default: 0.25 },
   maxExposure: { type: Number, default: 0.15 }
@@ -42,11 +41,23 @@ const User = mongoose.model('User', UserSchema);
 const Config = mongoose.model('Config', ConfigSchema);
 
 // ============================================================
-// MIDDLEWARE DE SEGURIDAD (VERIFICACIÓN DE TOKEN E IP)
+// AUXILIAR: EXTRACTOR SEGURO DE IP REAL (SALTERS PROXIES DE NETLIFY/RENDER)
+// ============================================================
+const getCleanClientIp = (req) => {
+  let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  if (ip && ip.includes(',')) {
+    // Si viene una cadena de proxies "IP_Cliente, Proxy1, Proxy2", agarramos estrictamente la primera
+    ip = ip.split(',')[0].trim();
+  }
+  return ip;
+};
+
+// ============================================================
+// MIDDLEWARE DE SEGURIDAD (VERIFICACIÓN DE TOKEN E IP FILTRADA)
 // ============================================================
 const authMiddleware = async (req, res, next) => {
   const token = req.headers['authorization'];
-  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = getCleanClientIp(req); // IP limpia de filtros intermedios
 
   if (!token) return res.status(401).json({ error: 'Acceso denegado. Falta token de autenticación.' });
 
@@ -57,6 +68,7 @@ const authMiddleware = async (req, res, next) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'Usuario no registrado.' });
 
+    // CORTAFUEGOS DE IP SEGURO: Compara sólo las IPs reales de origen
     if (user.activeIp && user.activeIp !== clientIp) {
       return res.status(403).json({ error: 'ALERTA DE SEGURIDAD: Intento de multi-sesión IP detectado.' });
     }
@@ -71,10 +83,10 @@ const authMiddleware = async (req, res, next) => {
 // ENDPOINTS OPERATIVOS API
 // ============================================================
 
-// 1. INICIO DE SESIÓN (Devuelve los parámetros guardados de este usuario)
+// 1. INICIO DE SESIÓN (Guarda la IP limpia de origen)
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
-  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = getCleanClientIp(req);
 
   try {
     const user = await User.findOne({ username: username.toLowerCase() });
@@ -88,7 +100,6 @@ app.post('/api/auth/login', async (req, res) => {
 
     const token = jwt.sign({ id: user._id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
     
-    // Entregamos el token y sus finanzas personales guardadas
     res.json({ 
       token, 
       role: user.role, 
@@ -102,7 +113,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 2. CREACIÓN EXTERNA DE USUARIOS (EXCLUSIVO CREADOR / ADMIN)
+// 2. CREACIÓN EXTERNA DE USUARIOS (SOLO ADMIN)
 app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado. Rango Administrador requerido.' });
 
@@ -128,7 +139,7 @@ app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
   }
 });
 
-// 3. ACTUALIZAR SÓLO LAS LLAVES DE GOOGLE (EXCLUSIVO ADMIN — Las finanzas se removieron de aquí)
+// 3. ACTUALIZAR LLAVES CENTRALES DE GOOGLE (SOLO ADMIN)
 app.post('/api/admin/config', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Restringido. Solo el creador puede alterar los canales.' });
 
@@ -147,7 +158,7 @@ app.post('/api/admin/config', authMiddleware, async (req, res) => {
   }
 });
 
-// 4. ACTUALIZAR PARÁMETROS INDIVIDUALES (Accesible por CUALQUIER usuario para sus propias finanzas)
+// 4. ACTUALIZAR FINANZAS PROPIAS
 app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   const { bankroll, kellyFraction, maxExposure } = req.body;
 

@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN PARANOID DE SEGURIDAD)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN ULTRA-FILTRADO COGNITIVO)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -34,7 +34,7 @@ const UserSchema = new mongoose.Schema({
 
 const ConfigSchema = new mongoose.Schema({
   key: { type: String, default: 'system_config' },
-  apiKeysPool: { type: String, default: '' } // Inicializado totalmente vacío por seguridad
+  apiKeysPool: { type: String, default: '' } 
 });
 
 const User = mongoose.model('User', UserSchema);
@@ -180,13 +180,12 @@ app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. PROXY DE RADAR PROTEGIDO (BLINDADO CON EXTRACCIÓN EXCLUSIVA DE MONGODB)
+// 5. PROXY DE RADAR CON INTERCEPTOR Y EXTRACTOR DE EXPERTO
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
   try {
     const config = await Config.findOne({ key: 'system_config' });
     
-    // Si no hay configuración o el pool está vacío, detenemos el proceso antes de romper nada
     if (!config || !config.apiKeysPool) {
       return res.status(400).json({ error: 'ERROR DE RED: No hay llaves de Google cargadas en el Panel Creador.' });
     }
@@ -209,6 +208,20 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
     });
 
     const googleData = await googleResponse.json();
+
+    // 🔬 EL FILTRO EMBRECHADO DE SEGURIDAD INTERNA:
+    // Cortamos y destruimos cualquier saludo de Gemini ("Según el...", "A continuación...")
+    let rawText = googleData.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (rawText) {
+      const firstOpen = rawText.indexOf('{');
+      const lastClose = rawText.lastIndexOf('}');
+      if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+        // Extraemos milimétricamente el JSON puro aislado de cualquier texto natural
+        let cleanJsonText = rawText.substring(firstOpen, lastClose + 1);
+        googleData.candidates[0].content.parts[0].text = cleanJsonText;
+      }
+    }
+
     res.json(googleData);
   } catch (err) {
     res.status(500).json({ error: 'Fallo crítico en el túnel de escaneo del servidor.' });

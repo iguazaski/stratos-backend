@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN ULTRA-FILTRADO COGNITIVO)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN NATIVA JSON MODE)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -180,7 +180,7 @@ app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. PROXY DE RADAR CON INTERCEPTOR Y EXTRACTOR DE EXPERTO
+// 5. PROXY DE RADAR EN MODO JSON ESTRICTO OBLIGATORIO
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
   try {
@@ -203,25 +203,15 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ googleSearch: {} }] 
+        tools: [{ googleSearch: {} }],
+        // 🛡️ EL PARCHE MAESTRO: Forzamos a Google a responder ÚNICAMENTE en JSON válido
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
       }),
     });
 
     const googleData = await googleResponse.json();
-
-    // 🔬 EL FILTRO EMBRECHADO DE SEGURIDAD INTERNA:
-    // Cortamos y destruimos cualquier saludo de Gemini ("Según el...", "A continuación...")
-    let rawText = googleData.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (rawText) {
-      const firstOpen = rawText.indexOf('{');
-      const lastClose = rawText.lastIndexOf('}');
-      if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-        // Extraemos milimétricamente el JSON puro aislado de cualquier texto natural
-        let cleanJsonText = rawText.substring(firstOpen, lastClose + 1);
-        googleData.candidates[0].content.parts[0].text = cleanJsonText;
-      }
-    }
-
     res.json(googleData);
   } catch (err) {
     res.status(500).json({ error: 'Fallo crítico en el túnel de escaneo del servidor.' });

@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (CONEXIÓN CLÁSICA BLINDADA)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN NATIVA CLOUD)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -9,14 +9,14 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Token secreto para firmar las sesiones de usuario
+// Token secreto de encriptación para firmar las sesiones de operador
 const JWT_SECRET = "STRATOS_QUANT_MEGA_SECRET_2026"; 
 
-// CONEXIÓN GLOBAL SHARDED (Formato Clásico inmune a bloqueos de Router)
-const MONGO_URI = "mongodb://iwazoski:Rosa08%24@ac-0wch6k0-shard-00-00.thpkjnz.mongodb.net:27017,ac-0wch6k0-shard-00-01.thpkjnz.mongodb.net:27017,ac-0wch6k0-shard-00-02.thpkjnz.mongodb.net:27017/?ssl=true&replicaSet=atlas-12uyoa-shard-0&authSource=admin&appName=Stratos";
+// CONEXIÓN GLOBAL NATIVA CLOUD (Optimizado para el firewall de Render)
+const MONGO_URI = "mongodb+srv://iwazoski:Rosa08%24@stratos.thpkjnz.mongodb.net/stratos?retryWrites=true&w=majority&appName=Stratos";
 
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('🔴 Base de Datos Colmena Conectada con Éxito (Canal Clásico)'))
+  .then(() => console.log('🔴 Base de Datos Colmena Conectada con Éxito (Canal Cloud)'))
   .catch(err => console.error('Error de conexión en MongoDB:', err));
 
 // ============================================================
@@ -56,7 +56,7 @@ const authMiddleware = async (req, res, next) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'Usuario no registrado.' });
 
-    // CORTAFUEGOS DE IP: Si la IP cambia durante la sesión activa, bloquea el acceso
+    // CORTAFUEGOS DE IP: Si la IP cambia a mitad de la sesión activa, revoca el acceso
     if (user.activeIp && user.activeIp !== clientIp) {
       return res.status(403).json({ error: 'ALERTA DE SEGURIDAD: Intento de multi-sesión IP detectado.' });
     }
@@ -83,7 +83,7 @@ app.post('/api/auth/login', async (req, res) => {
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) return res.status(400).json({ error: 'Contraseña incorrecta.' });
 
-    // Fijamos la IP del dispositivo en la base de datos para esta sesión activa
+    // Fijamos de inmediato la IP del dispositivo para restringir accesos simultáneos
     user.activeIp = clientIp;
     await user.save();
 
@@ -142,7 +142,7 @@ app.post('/api/admin/config', authMiddleware, async (req, res) => {
   }
 });
 
-// 4. PROXY DE RADAR PROTEGIDO (Oculta las llaves y realiza las búsquedas)
+// 4. PROXY DE RADAR PROTEGIDO (Oculta las llaves a los clientes y procesa escaneos)
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
 
@@ -150,7 +150,7 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
     const config = await Config.findOne({ key: 'system_config' });
     const keys = config ? config.apiKeysPool.split(',').map(k => k.trim()) : ['AIzaSyBdvGSeawJOS6yRzAiNCA7Vn_qexeeUP60'];
     
-    // Rotación balanceada aleatoria entre el pool de llaves en la nube
+    // Balanceo dinámico usando rotación aleatoria del pool seguro de la base de datos
     const targetKey = keys[Math.floor(Math.random() * keys.length)]; 
     const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${targetKey}`;
 
@@ -170,7 +170,7 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. CIERRE DE SESIÓN SEGURO (LIBERACIÓN DE IP)
+// 5. CIERRE DE SESIÓN SEGURO (LIBERACIÓN DE IP DE DISPOSITIVO)
 app.post('/api/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { activeIp: null });
@@ -180,7 +180,7 @@ app.post('/api/auth/logout', authMiddleware, async (req, res) => {
   }
 });
 
-// ESCUCHA OPERATIVA DEL PUERTO CENTRAL
+// ESCUCHA OPERATIVA DEL PUERTO CENTRAL DE INTERNET
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`⚡ Servidor STRATOS operando en Puerto ${PORT}`));
 
@@ -207,5 +207,5 @@ async function crearPrimerAdmin() {
   }
 }
 
-// Ejecutar inyección cuando la base de datos abra el canal de escucha
+// Inicializar semilla automática al abrir el canal de datos con Atlas
 mongoose.connection.once('open', crearPrimerAdmin);

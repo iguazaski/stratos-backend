@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN JURISDICCIÓN ADMINISTRATIVA)
+// server.js — BACKEND SEGURO STRATOS v15.3 (EDICIÓN PERSISTENCIA ABSOLUTA CLOUD)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -9,10 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Token secreto de encriptación para firmar las sesiones de operador
 const JWT_SECRET = "STRATOS_QUANT_MEGA_SECRET_2026"; 
-
-// CONEXIÓN GLOBAL NATIVA CLOUD
 const MONGO_URI = "mongodb+srv://iwazoski:Rosa08%24@stratos.thpkjnz.mongodb.net/stratos?retryWrites=true&w=majority&appName=Stratos";
 
 mongoose.connect(MONGO_URI)
@@ -20,7 +17,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('Error de conexión en MongoDB:', err));
 
 // ============================================================
-// MODELOS DE DATOS (ESQUEMAS CON AJUSTES INDIVIDUALES Y BLOQUEO)
+// ESQUEMA DE BASE DE DATOS TOTALMENTE PERSISTENTE POR OPERADOR
 // ============================================================
 const UserSchema = new mongoose.Schema({
   username: { type: String, unique: true, required: true },
@@ -30,7 +27,14 @@ const UserSchema = new mongoose.Schema({
   bankroll: { type: Number, default: 100.00 },
   kellyFraction: { type: Number, default: 0.25 },
   maxExposure: { type: Number, default: 0.15 },
-  isBlocked: { type: Boolean, default: false } // Campo de suspensión de cuenta
+  isBlocked: { type: Boolean, default: false },
+  // 💾 NUEVO ALMACENAMIENTO DE SEGURIDAD EN LA NUBE:
+  activePicks: { type: Array, default: [] },
+  history: { type: Array, default: [] },
+  stats: {
+    type: Object,
+    default: { total: 0, ganadas: 0, perdidas: 0, profit: 0 }
+  }
 });
 
 const ConfigSchema = new mongoose.Schema({
@@ -41,315 +45,182 @@ const ConfigSchema = new mongoose.Schema({
 const User = mongoose.model('User', UserSchema);
 const Config = mongoose.model('Config', ConfigSchema);
 
-// ============================================================
-// AUXILIAR: EXTRACTOR SEGURO DE IP REAL
-// ============================================================
 const getCleanClientIp = (req) => {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  if (ip && ip.includes(',')) {
-    ip = ip.split(',')[0].trim();
-  }
+  if (ip && ip.includes(',')) ip = ip.split(',')[0].trim();
   return ip;
 };
 
-// ============================================================
-// MIDDLEWARE DE SEGURIDAD (VERIFICACIÓN DE TOKEN, IP E ISBLOCKED)
-// ============================================================
 const authMiddleware = async (req, res, next) => {
   const token = req.headers['authorization'];
   const clientIp = getCleanClientIp(req);
-
-  if (!token) return res.status(401).json({ error: 'Acceso denegado. Falta token de autenticación.' });
-
+  if (!token) return res.status(401).json({ error: 'Acceso denegado.' });
   try {
     const verified = jwt.verify(token, JWT_SECRET);
     req.user = verified;
-
     const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ error: 'Usuario no registrado.' });
-
-    // CORTAFUEGOS DE SUSPENSIÓN: Expulsa al usuario en caliente si ha sido bloqueado
-    if (user.isBlocked) {
-      return res.status(403).json({ error: 'ACCESO DENEGADO: Tu cuenta ha sido suspendida por el administrador.' });
-    }
-
-    if (user.activeIp && user.activeIp !== clientIp) {
-      return res.status(403).json({ error: 'ALERTA DE SEGURIDAD: Intento de multi-sesión IP detectado.' });
-    }
-
+    if (!user || user.isBlocked) return res.status(403).json({ error: 'Sesión restringida.' });
+    if (user.activeIp && user.activeIp !== clientIp) return res.status(403).json({ error: 'Multi-IP detectada.' });
     next();
-  } catch (err) {
-    res.status(400).json({ error: 'Sesión inválida o expirada.' });
-  }
+  } catch (err) { res.status(400).json({ error: 'Token inválido.' }); }
 };
 
-// ============================================================
-// ENDPOINTS OPERATIVOS API
-// ============================================================
-
-// 1. INICIO DE SESIÓN (Valida si está bloqueado antes de firmar token)
+// 1. LOGIN CON RECUPERACIÓN COMPLETA DE ESTADO DESDE MONGODB
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   const clientIp = getCleanClientIp(req);
-
   try {
     const user = await User.findOne({ username: username.toLowerCase() });
-    if (!user) return res.status(400).json({ error: 'Usuario no registrado en el sistema.' });
-
-    if (user.isBlocked) {
-      return res.status(403).json({ error: 'Cuenta suspendida. Contacta al administrador central.' });
-    }
-
+    if (!user || user.isBlocked) return res.status(400).json({ error: 'Fallo de acceso.' });
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) return res.status(400).json({ error: 'Contraseña incorrecta.' });
-
+    
     user.activeIp = clientIp;
     await user.save();
-
+    
     const token = jwt.sign({ id: user._id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
     
+    // Devolvemos absolutamente todo el progreso guardado de este usuario en internet
     res.json({ 
-      token, 
-      role: user.role, 
-      username: user.username,
-      bankroll: user.bankroll,
-      kellyFraction: user.kellyFraction,
-      maxExposure: user.maxExposure
+      token, role: user.role, username: user.username, 
+      bankroll: user.bankroll, kellyFraction: user.kellyFraction, maxExposure: user.maxExposure,
+      activePicks: user.activePicks, history: user.history, stats: user.stats
     });
-  } catch (err) {
-    res.status(500).json({ error: 'Error en la verificación de seguridad.' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Error interno de red.' }); }
 });
 
-// 2. CREACIÓN EXTERNA DE USUARIOS (SOLO ADMIN)
-app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado. Rango Administrador requerido.' });
-
-  const { newUsername, newPassword, newRole } = req.body;
-
-  try {
-    const userExists = await User.findOne({ username: newUsername.toLowerCase() });
-    if (userExists) return res.status(400).json({ error: 'El identificador de operador ya existe.' });
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    const newUser = new User({
-      username: newUsername.toLowerCase(),
-      password: hashedPassword,
-      role: newRole || 'operador'
-    });
-
-    await newUser.save();
-    res.json({ success: `Operador @${newUsername.toUpperCase()} inyectado en la colmena con éxito.` });
-  } catch (err) {
-    res.status(500).json({ error: 'Fallo al procesar el alta en la base de datos.' });
-  }
-});
-
-// 3. VER LISTA DE USUARIOS REGISTRADOS (SOLO ADMIN)
-app.get('/api/admin/users', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acceso restringido.' });
-  try {
-    // Traemos todos los usuarios omitiendo la contraseña por seguridad
-    const users = await User.find({}, '-password');
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ error: 'Error al extraer la nómina de operadores.' });
-  }
-});
-
-// 4. ELIMINAR UN OPERADOR POR COMPLETO (SOLO ADMIN)
-app.delete('/api/admin/users/:id', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acceso restringido.' });
-  try {
-    const userTarget = await User.findById(req.params.id);
-    if (!userTarget) return res.status(404).json({ error: 'Usuario no localizado.' });
-    
-    // Evitar que el admin se borre a sí mismo por error
-    if (userTarget.username === 'admin') {
-      return res.status(400).json({ error: 'Protección Raíz: No puedes eliminar la cuenta maestra admin.' });
-    }
-
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ success: 'Operador purgado del ecosistema correctamente.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Fallo al eliminar registro cloud.' });
-  }
-});
-
-// 5. ALTERNAR BLOQUEO / SUSPENSIÓN DE UN OPERADOR (SOLO ADMIN)
-app.post('/api/admin/users/:id/toggle-block', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acceso restringido.' });
-  try {
-    const userTarget = await User.findById(req.params.id);
-    if (!userTarget) return res.status(404).json({ error: 'Usuario no localizado.' });
-
-    if (userTarget.username === 'admin') {
-      return res.status(400).json({ error: 'Protección Raíz: No puedes suspender al administrador central.' });
-    }
-
-    // Invertimos el estado de bloqueo
-    userTarget.isBlocked = !userTarget.isBlocked;
-    
-    // Si lo bloqueamos, le limpiamos la IP activa para desconectarlo forzosamente en el acto
-    if (userTarget.isBlocked) {
-      userTarget.activeIp = null;
-    }
-
-    await userTarget.save();
-    res.json({ success: 'Estado de restricción actualizado con éxito.', user: userTarget });
-  } catch (err) {
-    res.status(500).json({ error: 'Error al conmutar el interruptor de bloqueo.' });
-  }
-});
-
-// 6. ACTUALIZAR POOL DE LLAVES (SOLO ADMIN)
-app.post('/api/admin/config', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Restringido. Solo el creador puede alterar los canales.' });
-
-  const { apiKeysPool } = req.body;
-
-  try {
-    let config = await Config.findOne({ key: 'system_config' });
-    if (!config) config = new Config({ key: 'system_config' });
-
-    if (apiKeysPool) config.apiKeysPool = apiKeysPool;
-
-    await config.save();
-    res.json({ success: 'Pool central de API Keys actualizado en la nube con éxito.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Fallo al resguardar la configuración cloud.' });
-  }
-});
-
-// 7. ACTUALIZAR FINANZAS PROPIAS
+// 2. SINCRONIZADOR GLOBAL: GUARDA DE UN SOLO GOLPE CUALQUIER CAMBIO DEL OPERADOR
 app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
-  const { bankroll, kellyFraction, maxExposure } = req.body;
-
+  const { bankroll, kellyFraction, maxExposure, activePicks, history, stats } = req.body;
   try {
     const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ error: 'Usuario no registrado.' });
-
     if (bankroll !== undefined) user.bankroll = bankroll;
     if (kellyFraction !== undefined) user.kellyFraction = kellyFraction;
     if (maxExposure !== undefined) user.maxExposure = maxExposure;
-
+    if (activePicks !== undefined) user.activePicks = activePicks;
+    if (history !== undefined) user.history = history;
+    if (stats !== undefined) user.stats = stats;
+    
     await user.save();
-    res.json({ 
-      success: 'Ajustes de riesgo sincronizados.', 
-      bankroll: user.bankroll, 
-      kellyFraction: user.kellyFraction, 
-      maxExposure: user.maxExposure 
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Error al actualizar finanzas personales en la nube.' });
-  }
+    res.json({ success: 'Estado cloud sincronizado con éxito.' });
+  } catch (err) { res.status(500).json({ error: 'Error al resguardar datos.' }); }
 });
 
-// 8. PROXY DE RADAR CON VERIFICADOR ANTI-CONGELAMIENTO
+// 3. REGISTRAR OPERADORES
+app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado.' });
+  const { newUsername, newPassword, newRole } = req.body;
+  try {
+    const userExists = await User.findOne({ username: newUsername.toLowerCase() });
+    if (userExists) return res.status(400).json({ error: 'Usuario existente.' });
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+    await User.create({ username: newUsername.toLowerCase(), password: hashedPassword, role: newRole || 'operador' });
+    res.json({ success: `Operador @${newUsername.toUpperCase()} inyectado con éxito.` });
+  } catch (err) { res.status(500).json({ error: 'Fallo al procesar alta.' }); }
+});
+
+app.get('/api/admin/users', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado.' });
+  try { res.json(await User.find({}, '-password')); } catch (err) { res.status(500).json({ error: 'Error.' }); }
+});
+
+app.delete('/api/admin/users/:id', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado.' });
+  try {
+    const target = await User.findById(req.params.id);
+    if (target.username === 'admin') return res.status(400).json({ error: 'Protegido.' });
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: 'Purgado.' });
+  } catch (err) { res.status(500).json({ error: 'Error.' }); }
+});
+
+app.post('/api/admin/users/:id/toggle-block', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado.' });
+  try {
+    const target = await User.findById(req.params.id);
+    if (target.username === 'admin') return res.status(400).json({ error: 'Protegido.' });
+    target.isBlocked = !target.isBlocked;
+    if (target.isBlocked) target.activeIp = null;
+    await target.save();
+    res.json({ success: 'Estado conmutado.' });
+  } catch (err) { res.status(500).json({ error: 'Error.' }); }
+});
+
+app.post('/api/admin/config', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Denegado.' });
+  try {
+    let config = await Config.findOne({ key: 'system_config' });
+    if (!config) config = new Config({ key: 'system_config' });
+    config.apiKeysPool = req.body.apiKeysPool;
+    await config.save();
+    res.json({ success: 'Pool de llaves guardado.' });
+  } catch (err) { res.status(500).json({ error: 'Error.' }); }
+});
+
+// RADAR: ESCANEO COGNITIVO COMPLETO
 app.post('/api/scan', authMiddleware, async (req, res) => {
-  const { prompt } = req.body;
   try {
     const config = await Config.findOne({ key: 'system_config' });
-    
-    if (!config || !config.apiKeysPool) {
-      return res.status(400).json({ error: 'No hay llaves de Google cargadas en el Panel Creador.' });
-    }
-
+    if (!config || !config.apiKeysPool) return res.status(400).json({ error: 'Pool vacío.' });
     const keys = config.apiKeysPool.split(',').map(k => k.trim()).filter(k => k.length > 0);
-    if (keys.length === 0) {
-      return res.status(400).json({ error: 'El pool de llaves configurado está vacío.' });
-    }
-
-    const targetKey = keys[Math.floor(Math.random() * keys.length)]; 
-    const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${targetKey}`;
-
-    const googleResponse = await fetch(googleUrl, {
+    const targetKey = keys[Math.floor(Math.random() * keys.length)];
+    
+    const googleResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${targetKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }] 
+        contents: [{ parts: [{ text: req.body.prompt }] }],
+        tools: [{ googleSearch: {} }],
+        generationConfig: { responseMimeType: "application/json" }
+      }),
+    });
+    res.json(await googleResponse.json());
+  } catch (err) { res.status(500).json({ error: 'Fallo de radar.' }); }
+});
+
+// MOTOR DE RESOLUCIÓN DE APUESTAS AUTOMÁTICO
+app.post('/api/settle', authMiddleware, async (req, res) => {
+  const { activePicks } = req.body;
+  if (!activePicks || activePicks.length === 0) return res.json({ resoluciones: [] });
+  try {
+    const config = await Config.findOne({ key: 'system_config' });
+    const keys = config.apiKeysPool.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    const targetKey = keys[Math.floor(Math.random() * keys.length)];
+
+    const promptAuditoria = `Actúa como un auditor oficial de resultados deportivos. Revisa internet en tiempo real para encontrar los marcadores finales y estadísticas de estos partidos. Determina si la línea sugerida se cumplió (GANADA) o no (PERDIDA).
+    Lista de apuestas: ${JSON.stringify(activePicks)}
+    Devuelve estrictamente un JSON estructurado con este formato:
+    { "resoluciones": [ { "id": "id_de_la_apuesta", "resultado": "GANADA o PERDIDA", "analisis": "Escribe una frase corta indicando el marcador final real encontrado que verifique la resolución." } ] }`;
+
+    const googleResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${targetKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptAuditoria }] }],
+        tools: [{ googleSearch: {} }],
+        generationConfig: { responseMimeType: "application/json" }
       }),
     });
 
     const googleData = await googleResponse.json();
-
-    if (googleData.error) {
-      return res.status(400).json({ error: `Google API Error: ${googleData.error.message}` });
-    }
-
     let rawText = googleData.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) {
-      return res.status(400).json({ error: 'Respuesta vacía de Google. Inténtalo de nuevo.' });
-    }
-
-    const firstOpen = rawText.indexOf('{');
-    const lastClose = rawText.lastIndexOf('}');
-    
-    let cleanText = "";
-    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-      cleanText = rawText.substring(firstOpen, lastClose + 1);
-    } else {
-      cleanText = rawText;
-    }
-
-    try {
-      const testParse = JSON.parse(cleanText.replace(/```json/g, '').replace(/```/g, '').trim());
-      if (!testParse.partidos) testParse.partidos = [];
-      cleanText = JSON.stringify(testParse);
-    } catch (e) {
-      cleanText = JSON.stringify({ partidos: [] });
-    }
-
-    const robustResponse = {
-      candidates: [{
-        content: {
-          parts: [{ text: cleanText }]
-        }
-      }]
-    };
-
-    res.json(robustResponse);
-  } catch (err) {
-    res.status(500).json({ error: 'Fallo crítico en el túnel de escaneo del servidor.' });
-  }
-});
-
-// 9. CIERRE DE SESIÓN SEGURO
-app.post('/api/auth/logout', authMiddleware, async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.user.id, { activeIp: null });
-    res.json({ success: 'Sesión e IP liberadas correctamente.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Error al desconectar terminal.' });
-  }
+    if (rawText) return res.json(JSON.parse(rawText.trim()));
+    throw new Error("Respuesta vacía del auditor.");
+  } catch (err) { res.status(500).json({ error: 'Fallo de escrutinio.' }); }
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`⚡ Servidor STRATOS operando en Puerto ${PORT}`));
 
-// INYECTOR MAESTRO AUTOMÁTICO
 async function crearPrimerAdmin() {
   try {
     const count = await User.countDocuments();
     if (count === 0) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash("stratos123", salt);
-      await User.create({
-        username: "admin",
-        password: hashedPassword,
-        role: "admin",
-        bankroll: 100.00,
-        kellyFraction: 0.25,
-        maxExposure: 0.15,
-        isBlocked: false
-      });
-      console.log("👤 Base de datos limpia detectada e inyectada.");
+      await User.create({ username: "admin", password: hashedPassword, role: "admin", bankroll: 100.00, kellyFraction: 0.25, maxExposure: 0.15 });
     }
-  } catch (err) {
-    console.error("Error en la siembra de base de datos:", err);
-  }
+  } catch (err) {}
 }
 mongoose.connection.once('open', crearPrimerAdmin);

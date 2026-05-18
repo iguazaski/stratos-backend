@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN MULTI-PERFIL CON RADAR CORREGIDO)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN PARANOID DE SEGURIDAD)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -34,14 +34,14 @@ const UserSchema = new mongoose.Schema({
 
 const ConfigSchema = new mongoose.Schema({
   key: { type: String, default: 'system_config' },
-  apiKeysPool: { type: String, default: 'AIzaSyBdvGSeawJOS6yRzAiNCA7Vn_qexeeUP60' }
+  apiKeysPool: { type: String, default: '' } // Inicializado totalmente vacío por seguridad
 });
 
 const User = mongoose.model('User', UserSchema);
 const Config = mongoose.model('Config', ConfigSchema);
 
 // ============================================================
-// AUXILIAR: EXTRACTOR SEGURO DE IP REAL (SALTAR PROXIES DE NETLIFY/RENDER)
+// AUXILIAR: EXTRACTOR SEGURO DE IP REAL
 // ============================================================
 const getCleanClientIp = (req) => {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -81,7 +81,7 @@ const authMiddleware = async (req, res, next) => {
 // ENDPOINTS OPERATIVOS API
 // ============================================================
 
-// 1. INICIO DE SESIÓN CON COMPATIBILIDAD MULTI-PERFIL
+// 1. INICIO DE SESIÓN
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   const clientIp = getCleanClientIp(req);
@@ -137,7 +137,7 @@ app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
   }
 });
 
-// 3. ACTUALIZAR POOL DE LLAVES
+// 3. ACTUALIZAR POOL DE LLAVES (SOLO ADMIN)
 app.post('/api/admin/config', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Restringido. Solo el creador puede alterar los canales.' });
 
@@ -180,12 +180,22 @@ app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. PROXY DE RADAR PROTEGIDO (CON ENLACE DE HERRAMIENTA CORREGIDO)
+// 5. PROXY DE RADAR PROTEGIDO (BLINDADO CON EXTRACCIÓN EXCLUSIVA DE MONGODB)
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
   try {
     const config = await Config.findOne({ key: 'system_config' });
-    const keys = config ? config.apiKeysPool.split(',').map(k => k.trim()) : ['AIzaSyBdvGSeawJOS6yRzAiNCA7Vn_qexeeUP60'];
+    
+    // Si no hay configuración o el pool está vacío, detenemos el proceso antes de romper nada
+    if (!config || !config.apiKeysPool) {
+      return res.status(400).json({ error: 'ERROR DE RED: No hay llaves de Google cargadas en el Panel Creador.' });
+    }
+
+    const keys = config.apiKeysPool.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    if (keys.length === 0) {
+      return res.status(400).json({ error: 'ERROR DE CONFIGURACIÓN: El pool de llaves está vacío.' });
+    }
+
     const targetKey = keys[Math.floor(Math.random() * keys.length)]; 
     const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${targetKey}`;
 
@@ -194,7 +204,7 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ googleSearch: {} }] // 🌐 ENLACE NATIVO CORREGIDO (googleSearch)
+        tools: [{ googleSearch: {} }] 
       }),
     });
 
@@ -216,7 +226,6 @@ app.post('/api/auth/logout', authMiddleware, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.use(express.static('build')); // Servir archivos estáticos si existieran
 app.listen(PORT, () => console.log(`⚡ Servidor STRATOS operando en Puerto ${PORT}`));
 
 // INYECTOR MAESTRO AUTOMÁTICO

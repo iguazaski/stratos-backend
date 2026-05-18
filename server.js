@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.2 (CORRECCIÓN PROXY IP MULTI-PERFIL)
+// server.js — BACKEND SEGURO STRATOS v15.2 (EDICIÓN MULTI-PERFIL CON RADAR CORREGIDO)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -41,12 +41,11 @@ const User = mongoose.model('User', UserSchema);
 const Config = mongoose.model('Config', ConfigSchema);
 
 // ============================================================
-// AUXILIAR: EXTRACTOR SEGURO DE IP REAL (SALTERS PROXIES DE NETLIFY/RENDER)
+// AUXILIAR: EXTRACTOR SEGURO DE IP REAL (SALTAR PROXIES DE NETLIFY/RENDER)
 // ============================================================
 const getCleanClientIp = (req) => {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   if (ip && ip.includes(',')) {
-    // Si viene una cadena de proxies "IP_Cliente, Proxy1, Proxy2", agarramos estrictamente la primera
     ip = ip.split(',')[0].trim();
   }
   return ip;
@@ -57,7 +56,7 @@ const getCleanClientIp = (req) => {
 // ============================================================
 const authMiddleware = async (req, res, next) => {
   const token = req.headers['authorization'];
-  const clientIp = getCleanClientIp(req); // IP limpia de filtros intermedios
+  const clientIp = getCleanClientIp(req);
 
   if (!token) return res.status(401).json({ error: 'Acceso denegado. Falta token de autenticación.' });
 
@@ -68,7 +67,6 @@ const authMiddleware = async (req, res, next) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'Usuario no registrado.' });
 
-    // CORTAFUEGOS DE IP SEGURO: Compara sólo las IPs reales de origen
     if (user.activeIp && user.activeIp !== clientIp) {
       return res.status(403).json({ error: 'ALERTA DE SEGURIDAD: Intento de multi-sesión IP detectado.' });
     }
@@ -83,7 +81,7 @@ const authMiddleware = async (req, res, next) => {
 // ENDPOINTS OPERATIVOS API
 // ============================================================
 
-// 1. INICIO DE SESIÓN (Guarda la IP limpia de origen)
+// 1. INICIO DE SESIÓN CON COMPATIBILIDAD MULTI-PERFIL
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   const clientIp = getCleanClientIp(req);
@@ -139,7 +137,7 @@ app.post('/api/admin/create-user', authMiddleware, async (req, res) => {
   }
 });
 
-// 3. ACTUALIZAR LLAVES CENTRALES DE GOOGLE (SOLO ADMIN)
+// 3. ACTUALIZAR POOL DE LLAVES
 app.post('/api/admin/config', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Restringido. Solo el creador puede alterar los canales.' });
 
@@ -182,7 +180,7 @@ app.post('/api/user/update-profile', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. PROXY DE RADAR PROTEGIDO
+// 5. PROXY DE RADAR PROTEGIDO (CON ENLACE DE HERRAMIENTA CORREGIDO)
 app.post('/api/scan', authMiddleware, async (req, res) => {
   const { prompt } = req.body;
   try {
@@ -196,7 +194,7 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }]
+        tools: [{ googleSearch: {} }] // 🌐 ENLACE NATIVO CORREGIDO (googleSearch)
       }),
     });
 
@@ -218,6 +216,7 @@ app.post('/api/auth/logout', authMiddleware, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+app.use(express.static('build')); // Servir archivos estáticos si existieran
 app.listen(PORT, () => console.log(`⚡ Servidor STRATOS operando en Puerto ${PORT}`));
 
 // INYECTOR MAESTRO AUTOMÁTICO

@@ -1,4 +1,4 @@
-// server.js — BACKEND SEGURO STRATOS v15.3 (EDICIÓN RADAR SIN CHOQUE DE API)
+// server.js — BACKEND SEGURO STRATOS v15.3 (EDICIÓN RESILIENCIA TOTAL)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -132,7 +132,7 @@ app.post('/api/admin/config', authMiddleware, async (req, res) => {
 });
 
 // ============================================================
-// PROXY DE RADAR: SOLUCIÓN AL COMBATE DE FORMATOS DE GOOGLE
+// PROXY DE RADAR CON LIMPIEZA QUIRÚRGICA DE CADENASHallucinated
 // ============================================================
 app.post('/api/scan', authMiddleware, async (req, res) => {
   try {
@@ -146,37 +146,32 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: req.body.prompt }] }],
-        tools: [{ google_search: {} }] // 🌐 Buscador en vivo activo
-        // Removido responseMimeType de aquí para evitar el Error 400 de Google
+        tools: [{ google_search: {} }]
       }),
     });
 
     const googleData = await googleResponse.json();
-    
-    if (googleData.error) {
-      return res.status(400).json({ error: `Google API Error: ${googleData.error.message}` });
-    }
+    if (googleData.error) return res.status(400).json({ error: `Google API Error: ${googleData.error.message}` });
 
     let rawText = googleData.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) return res.status(400).json({ error: 'Google no retornó texto estructurado.' });
+    if (!rawText) return res.status(400).json({ error: 'La red de Google no retornó texto.' });
 
-    // Extracción por embrechado quirúrgico del JSON
-    const firstOpen = rawText.indexOf('{');
-    const lastClose = rawText.lastIndexOf('}');
-    let cleanText = "";
+    // 🔬 LIMPIEZA QUIRÚRGICA AVANZADA ANTI-SATURACIÓN
+    let cleanText = rawText.replace(/```json/gi, '').replace(/```/gi, '').trim();
+    const firstOpen = cleanText.indexOf('{');
+    const lastClose = cleanText.lastIndexOf('}');
+    
     if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-      cleanText = rawText.substring(firstOpen, lastClose + 1);
-    } else {
-      cleanText = rawText;
+      cleanText = cleanText.substring(firstOpen, lastClose + 1);
     }
 
-    // Validación interna de JSON antes de mandar al cliente
     try {
-      const verify = JSON.parse(cleanText.replace(/```json/g, '').replace(/```/g, '').trim());
+      const verify = JSON.parse(cleanText);
       if (!verify.partidos) verify.partidos = [];
       cleanText = JSON.stringify(verify);
     } catch(e) {
-      return res.status(400).json({ error: 'La IA falló al estructurar el árbol de datos. Reintenta el escaneo.' });
+      // Si la carga de datos corrompió el cierre del JSON, arrojamos un aviso amigable de optimización
+      return res.status(400).json({ error: 'Saturación de datos en la red. Selecciona solo 1 o 2 ligas para aligerar la consulta.' });
     }
 
     res.json({ candidates: [{ content: { parts: [{ text: cleanText }] } }] });
@@ -194,7 +189,7 @@ app.post('/api/settle', authMiddleware, async (req, res) => {
 
     const promptAuditoria = `Actúa como un auditor oficial de resultados deportivos. Revisa internet en tiempo real para encontrar los marcadores finales y estadísticas de estos partidos. Determina si la línea sugerida se cumplió (GANADA) o no (PERDIDA).
     Lista de apuestas: ${JSON.stringify(activePicks)}
-    Devuelve estrictamente un JSON estructurado con este formato:
+    Devuelve estrictamente un JSON structured con este formato:
     { "resoluciones": [ { "id": "id_de_la_apuesta", "resultado": "GANADA o PERDIDA", "analisis": "Indica el marcador final real encontrado." } ] }`;
 
     const googleResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${targetKey}`, {
